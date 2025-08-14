@@ -1,9 +1,11 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 import uuid
 from datetime import datetime
+from sqlalchemy.orm import Session
+from database import get_db, create_tables, Todo
 
 # Create FastAPI app instance
 app = FastAPI(title="TODO API", description="A simple TODO API with FastAPI", version="1.0.0")
@@ -31,9 +33,8 @@ class UpdateTodoRequest(BaseModel):
     text: Optional[str] = None
     completed: Optional[bool] = None
 
-# In-memory storage for TODO items
-# In a real application, this would be a database
-todos: List[TodoItem] = []
+# Create database tables on startup
+create_tables()
 
 @app.get("/")
 async def root():
@@ -50,64 +51,86 @@ async def root():
     }
 
 @app.get("/todos", response_model=List[TodoItem])
-async def get_todos():
+async def get_todos(db: Session = Depends(get_db)):
     """Get all TODO items"""
-    return todos
+    todos = db.query(Todo).all()
+    return [
+        TodoItem(
+            id=todo.id,
+            text=todo.text,
+            completed=todo.completed,
+            created_at=todo.created_at.isoformat()
+        )
+        for todo in todos
+    ]
 
 @app.post("/todos", response_model=TodoItem)
-async def create_todo(todo_request: CreateTodoRequest):
+async def create_todo(todo_request: CreateTodoRequest, db: Session = Depends(get_db)):
     """Create a new TODO item"""
     # Validate that text is not empty
     if not todo_request.text.strip():
         raise HTTPException(status_code=400, detail="Todo text cannot be empty")
     
-    # Create new TODO item
-    new_todo = TodoItem(
+    # Create new TODO item in database
+    db_todo = Todo(
         id=str(uuid.uuid4()),
         text=todo_request.text.strip(),
-        completed=False,
-        created_at=datetime.now().isoformat()
+        completed=False
     )
     
-    # Add to in-memory storage
-    todos.append(new_todo)
+    db.add(db_todo)
+    db.commit()
+    db.refresh(db_todo)
     
-    return new_todo
+    return TodoItem(
+        id=db_todo.id,
+        text=db_todo.text,
+        completed=db_todo.completed,
+        created_at=db_todo.created_at.isoformat()
+    )
 
 @app.put("/todos/{todo_id}", response_model=TodoItem)
-async def update_todo(todo_id: str, todo_request: UpdateTodoRequest):
+async def update_todo(todo_id: str, todo_request: UpdateTodoRequest, db: Session = Depends(get_db)):
     """Update a TODO item"""
-    # Find the TODO item
-    todo_index = None
-    for i, todo in enumerate(todos):
-        if todo.id == todo_id:
-            todo_index = i
-            break
+    # Find the TODO item in database
+    db_todo = db.query(Todo).filter(Todo.id == todo_id).first()
     
-    if todo_index is None:
+    if db_todo is None:
         raise HTTPException(status_code=404, detail="Todo not found")
     
     # Update the TODO item
     if todo_request.text is not None:
         if not todo_request.text.strip():
             raise HTTPException(status_code=400, detail="Todo text cannot be empty")
-        todos[todo_index].text = todo_request.text.strip()
+        db_todo.text = todo_request.text.strip()
     
     if todo_request.completed is not None:
-        todos[todo_index].completed = todo_request.completed
+        db_todo.completed = todo_request.completed
     
-    return todos[todo_index]
+    db.commit()
+    db.refresh(db_todo)
+    
+    return TodoItem(
+        id=db_todo.id,
+        text=db_todo.text,
+        completed=db_todo.completed,
+        created_at=db_todo.created_at.isoformat()
+    )
 
 @app.delete("/todos/{todo_id}")
-async def delete_todo(todo_id: str):
+async def delete_todo(todo_id: str, db: Session = Depends(get_db)):
     """Delete a TODO item"""
-    # Find and remove the TODO item
-    for i, todo in enumerate(todos):
-        if todo.id == todo_id:
-            deleted_todo = todos.pop(i)
-            return {"message": f"Todo '{deleted_todo.text}' deleted successfully"}
+    # Find and remove the TODO item from database
+    db_todo = db.query(Todo).filter(Todo.id == todo_id).first()
     
-    raise HTTPException(status_code=404, detail="Todo not found")
+    if db_todo is None:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    
+    deleted_text = db_todo.text
+    db.delete(db_todo)
+    db.commit()
+    
+    return {"message": f"Todo '{deleted_text}' deleted successfully"}
 
 if __name__ == "__main__":
     import uvicorn

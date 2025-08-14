@@ -1,0 +1,27 @@
+# Backend
+backend/todos.db
+backend/__pycache__/
+backend/*.pyc
+backend/*.pyo
+backend/*.pyd
+backend/.Python
+backend/venv/
+
+# Frontend (already handled by frontend/.gitignore)
+# But keeping some common ones here for completeness
+node_modules/
+.next/
+.env*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
